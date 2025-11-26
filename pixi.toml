@@ -1,0 +1,21 @@
+[workspace]
+channels = ["conda-forge"]
+name = "coletor-youtube"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+main = "python main.py"
+
+[dependencies]
+python = "3.12.*"
+pandas = ">=2.3.3,<3"
+numpy = ">=2.3.5,<3"
+google-api-python-client = ">=2.187.0,<3"
+google-auth-oauthlib = ">=1.2.3,<2"
+google-auth-httplib2 = ">=0.2.1,<0.3"
+tqdm = ">=4.67.1,<5"
+
+[pypi-dependencies]
+python-dotenv = ">=1.2.1, <2"
+isodate = ">=0.7.2, <0.8"
