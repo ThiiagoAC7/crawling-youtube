@@ -7,10 +7,10 @@ import pandas as pd
 
 def run_crawler():
     craw = Crawling()
-    # craw.build_channels_list()
+    craw.build_channels_list()
     # craw.build_channels_list_from_id()
     # craw.build_youtubers_videos_list_from_uploads()
-    craw.build_videos_comments_df(limit=90)
+    # craw.build_videos_comments_df(limit=750)
 
 def modificar_videos_json(arquivo_entrada, arquivo_saida):
         with open(arquivo_entrada, 'r', encoding='utf-8') as f:
@@ -48,6 +48,8 @@ def update_json():
 
 def merge_datasets(path):
     datasets = [f for f in os.listdir(path) if f.endswith('.csv')]
+    # datasets.append('comments_all.csv')
+
     print(datasets)
 
     dataframes = []
@@ -82,9 +84,9 @@ def merge_datasets(path):
 
     merged_df.drop_duplicates(inplace=True, ignore_index=True)
 
+    print(f"Final video IDs: {list(merged_df['video_id'].unique())}")
     print(f"Total comments after deduplication: {len(merged_df)}")
     print(f"Final unique videos: {merged_df['video_id'].nunique()}")
-    print(f"Final video IDs: {list(merged_df['video_id'].unique())}")
 
     output_file = f"{path}comments.csv"
     merged_df.to_csv(output_file, index=False)
@@ -93,30 +95,43 @@ def merge_datasets(path):
     return merged_df
 
 def verify_videos():
-    yt = "@TheTrenchFamily"
+    yt = "@cristiano"
 
     with open(f"./data/{yt}/videos_list.json", 'r') as f:
         dados = json.load(f)
 
-    video_ids = [ ]
+    df = pd.read_csv(f"./data/{yt}/comments_all.csv")
+    video_ids = df['video_id'].unique()
+    del df
 
-    i = 1
+    not_collected_ids = []
+
+    n = 1
     for _, video in enumerate(dados.get('videos', [])):
         if video["video_id"] in video_ids:
-            print(f"{i} -  id: {video['video_id']}, index: {video['idx']}  ")
+            print(f"{n} -  id: {video['video_id']}, index: {video['idx']}  ")
             print(f"\t views: {video['view_count']}")
             print(f"\t comments: {video['comment_count']}")
             print(f"\t collected: {video['collected']}")
-            i += 1
+        else:
+            print(f"{video['video_id']} not collected !")
+            not_collected_ids.append(video['video_id'])
+
+        n += 1
+
+    print(f"numero de videos: {n}")
+    print(f"not collected vids: {not_collected_ids}")
+
+    with open(f"./data/{yt}/to_collect.txt", 'w') as f:
+        f.write("\n".join(not_collected_ids))
 
 
 
 def main():
-    
     # modificar_videos_json(f"{CRAWLER_PATH}@cristiano/videos_list.json", f"{CRAWLER_PATH}@cristiano/videos_list.json")
     # run_crawler()
     # update_json()
-    path = f"{CRAWLER_PATH}@cristiano/"
+    path = f"{CRAWLER_PATH}@zackdfilms/"
     merge_datasets(path)
     # verify_videos()
 

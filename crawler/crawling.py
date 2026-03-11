@@ -140,7 +140,7 @@ class Crawling:
                 video_data = json.load(f)
 
             # crawl manually each youtuber, to check api limits
-            manual = ['@cristiano']
+            manual = ['@TheTrenchFamily']
 
             if video_data['youtuber'] in manual:
                 print(f"crawling comments from @{video_data['youtuber']}'s videos")
@@ -148,7 +148,6 @@ class Crawling:
                                                   video_data_path, 
                                                   path, 
                                                   limit=limit,
-                                                  filter_ids=['jeDKsg8r3ew', '35S7zTBFRhQ','ORc2270vgqs', 'ZkuaJYurYHw']
                                                   )
 
     def _get_youtuber_datasets_path(self):
@@ -311,7 +310,7 @@ class Crawling:
             print(f"\tprogress saved. '{v['video_title']}' marked as collected. Currently: {num_comments_count} comments.")
 
         print(f"saving...")
-        df.to_csv(f'{path}comments_0_{limit}.csv')
+        df.to_csv(f'{path}comments_0_{limit}_new.csv')
 
     ##
     # UPLOADS WITHOUT SHORTS
