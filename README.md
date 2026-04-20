@@ -21,3 +21,7 @@ pixi install # installs the environment
 
 pixi run main
 ```
+
+## TODO
+
+- [ ] api key rotation handler

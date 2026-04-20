@@ -7,21 +7,28 @@ import googleapiclient.errors
 import pandas as pd
 from isodate import parse_duration
 
-from constants import CHANNEL_IDS_LIST, CRAWLER_PATH, DEVELOPER_KEY, YOUTUBERS_PATH, YTBRS_LIST
+from constants import (
+    CHANNEL_IDS_LIST,
+    CRAWLER_PATH,
+    DEVELOPER_KEY,
+    YOUTUBERS_PATH,
+    YTBRS_LIST,
+)
 
 from .parser import *
 
 
 class Crawling:
-
-    def __init__(self):
-
+    def __init__(self, channel_ids=None, youtubers=None, api_key=None):
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "0"
 
         self._api_service_name = "youtube"
         self._api_version = "v3"
 
         self.yt_channel_ids = []
+        self.channel_ids = channel_ids if channel_ids is not None else CHANNEL_IDS_LIST
+        self.youtubers = youtubers if youtubers is not None else YTBRS_LIST
+        self.api_key = api_key if api_key is not None else DEVELOPER_KEY
 
         if not os.path.exists(CRAWLER_PATH):
             os.makedirs(CRAWLER_PATH)
@@ -29,9 +36,9 @@ class Crawling:
         self._build_youtube_client()
 
     def _build_youtube_client(self):
-        self.youtube = googleapiclient.discovery.build(self._api_service_name,
-                                                       self._api_version,
-                                                       developerKey=DEVELOPER_KEY)
+        self.youtube = googleapiclient.discovery.build(
+            self._api_service_name, self._api_version, developerKey=self.api_key
+        )
 
     ##
     # CHANNELS LIST
@@ -42,8 +49,7 @@ class Crawling:
         builds youtubers_channel_list dataset
         """
         youtubers = []
-        for name in YTBRS_LIST:
-
+        for name in self.youtubers:
             print(f"Crawling info from @{name} ...")
 
             # make request to yt API with channel user @
@@ -69,21 +75,20 @@ class Crawling:
         builds youtubers_channel_list dataset
         """
         youtubers = []
-        for id in CHANNEL_IDS_LIST:
+        for id in self.channel_ids:
             print(f"Crawling info from @{id} ...")
 
             # make request to yt API with channel user @
             request = self.youtube.channels().list(
-                part="snippet,contentDetails,statistics",
-                id=id
+                part="snippet,contentDetails,statistics", id=id
             )
 
             response = request.execute()
 
             print(response)
 
-            if response['pageInfo']['totalResults'] > 0:
-            # saving data as json to ./data/{youtuber name}
+            if response["pageInfo"]["totalResults"] > 0:
+                # saving data as json to ./data/{youtuber name}
                 ytbr_data = parse_channel_info(response)
                 youtubers.append(ytbr_data)
 
@@ -108,7 +113,8 @@ class Crawling:
 
         for channel in youtubers_list:
             print(
-                f"Crawling info from : {channel['channel_title']}, @{channel['youtuber']} ...")
+                f"Crawling info from : {channel['channel_title']}, @{channel['youtuber']} ..."
+            )
 
             # get only videos by channel id
             request = self.youtube.search().list(
@@ -121,7 +127,7 @@ class Crawling:
 
             response = request.execute()
 
-            _path = CRAWLER_PATH+channel['youtuber']
+            _path = CRAWLER_PATH + channel["youtuber"]
             os.makedirs(_path, exist_ok=True)
             parse_search_videos(response, channel, _path)
 
@@ -136,19 +142,21 @@ class Crawling:
         for path in datasets:
             video_data = []
             video_data_path = path + "videos_list.json"
-            with open(video_data_path, 'r') as f:
+            with open(video_data_path, "r") as f:
                 video_data = json.load(f)
 
             # crawl manually each youtuber, to check api limits
-            manual = ['@TheTrenchFamily']
+            # manual = ["@TheTrenchFamily"]
+            # if video_data["youtuber"] in manual:
+            # manual = []
 
-            if video_data['youtuber'] in manual:
-                print(f"crawling comments from @{video_data['youtuber']}'s videos")
-                self._get_comments_from_video_ids(video_data, 
-                                                  video_data_path, 
-                                                  path, 
-                                                  limit=limit,
-                                                  )
+            print(f"crawling comments from @{video_data['youtuber']}'s videos")
+            self._get_comments_from_video_ids(
+                video_data,
+                video_data_path,
+                path,
+                limit=limit,
+            )
 
     def _get_youtuber_datasets_path(self):
         """
@@ -160,13 +168,15 @@ class Crawling:
         for item in os.listdir(CRAWLER_PATH):
             _item_path = os.path.join(CRAWLER_PATH, item)
             if os.path.isdir(_item_path):
-                data.append(_item_path+"/")
+                data.append(_item_path + "/")
         return data
 
-    def _get_replies_from_parent_ids(self, parent_ids, video_id, video_title) -> pd.DataFrame:
+    def _get_replies_from_parent_ids(
+        self, parent_ids, video_id, video_title
+    ) -> pd.DataFrame:
         """
-        gets replies from comments with more than 5 replies 
-        - commentThread endpoint only returns 5 replies per comment! 
+        gets replies from comments with more than 5 replies
+        - commentThread endpoint only returns 5 replies per comment!
         """
         page_token = None
         _count = 0
@@ -181,7 +191,7 @@ class Crawling:
                     maxResults=100,
                     pageToken=page_token,
                     parentId=id,
-                    textFormat='plainText'
+                    textFormat="plainText",
                 )
 
                 response = {}
@@ -189,12 +199,16 @@ class Crawling:
                     response = request.execute()
                 except googleapiclient.errors.HttpError as e:
                     if e.error_details[0]["reason"] == "commentNotFound":
-                        print(f"skipping current comment: {e.error_details[0]['message']}")
+                        print(
+                            f"skipping current comment: {e.error_details[0]['message']}"
+                        )
                     if e.error_details[0]["reason"] == "quotaExceeded":
-                        print("\n" + "="*50)
+                        print("\n" + "=" * 50)
                         print("ERRO: Quota diária da API do YouTube foi atingida.")
-                        print("Salvando todo o progresso dos comentários coletados até agora...")
-                        
+                        print(
+                            "Salvando todo o progresso dos comentários coletados até agora..."
+                        )
+
                         return df
 
                 if response:
@@ -213,7 +227,9 @@ class Crawling:
 
         return df
 
-    def _get_comments_from_video_ids(self, video_data, video_data_path, path,limit=50, filter_ids = []):
+    def _get_comments_from_video_ids(
+        self, video_data, video_data_path, path, limit=50, filter_ids=[]
+    ):
         """
         iterates through each video, gets its comments and saves dataset.
         Params:
@@ -228,19 +244,19 @@ class Crawling:
 
         num_requests = 0
         num_comments_count = 0
-        for v in video_data['videos'][:limit]:  # first 50 videos
+        for v in video_data["videos"][:limit]:  # first 50 videos
             _count = 0
 
-            if v['collected']:  # skip collected vids
+            if v["collected"]:  # skip collected vids
                 continue
 
-            if (filter_ids) and (v['video_id'] not in filter_ids):
-                print(f'not in selected videos:{v["video_id"]}')
+            if (filter_ids) and (v["video_id"] not in filter_ids):
+                print(f"not in selected videos:{v['video_id']}")
                 continue
 
-            if int(v['comment_count']) == 0:
-                print(f'Skipping video, 0 comments ...')
-                v['collected'] = True
+            if int(v["comment_count"]) == 0:
+                print(f"Skipping video, 0 comments ...")
+                v["collected"] = True
                 continue
 
             if api_error:
@@ -255,8 +271,8 @@ class Crawling:
                     videoId=v["video_id"],
                     maxResults=100,
                     pageToken=page_token,
-                    order="time", # has to be time, 'relevance' doesnt bring all comments
-                    textFormat='plainText',
+                    order="time",  # has to be time, 'relevance' doesnt bring all comments
+                    textFormat="plainText",
                 )
 
                 response = {}
@@ -265,38 +281,40 @@ class Crawling:
                     num_requests += 1
                 except googleapiclient.errors.HttpError as e:
                     if e.error_details[0]["reason"] == "commentsDisabled":
-                        print(f"skipping current video: {e.error_details[0]['message']}")
+                        print(
+                            f"skipping current video: {e.error_details[0]['message']}"
+                        )
                     if e.error_details[0]["reason"] == "quotaExceeded":
-                        print("\n" + "="*50)
+                        print("\n" + "=" * 50)
                         print("ERRO: Quota diária da API do YouTube foi atingida.")
-                        print("Salvando todo o progresso dos comentários coletados até agora...")
-                        
-                        comments_output_path = f'{path}comments_QUOTAERROR.csv'
+                        print(
+                            "Salvando todo o progresso dos comentários coletados até agora..."
+                        )
+
+                        comments_output_path = f"{path}comments_QUOTAERROR.csv"
                         df.to_csv(comments_output_path, index=False)
                         print(f"Progresso salvo em: {comments_output_path}")
                         api_error = True
                         break
 
-
                 # parses response, with selected params
                 if response:
-                    print(f"\t\tparsing comments and appending to dataframe, page {_count}, req {num_requests}")
+                    print(
+                        f"\t\tparsing comments and appending to dataframe, page {_count}, req {num_requests}"
+                    )
                     _d, comments_many_replies_ids = parse_comment_threads(
-                        response,
-                        v["video_id"],
-                        v["video_title"],
-                        video_data_path
+                        response, v["video_id"], v["video_title"], video_data_path
                     )
                     df = pd.concat([df, pd.DataFrame(_d)], ignore_index=True)
-                    if comments_many_replies_ids != []:  
-                    # commentThread endpoint only returns 5 replies per comment!
+                    if comments_many_replies_ids != []:
+                        # commentThread endpoint only returns 5 replies per comment!
                         repl_df = self._get_replies_from_parent_ids(
                             comments_many_replies_ids,
                             v["video_id"],
                             v["video_title"],
                         )
                         df = pd.concat([df, repl_df], ignore_index=True)
-                    
+
                     num_comments_count = len(df)
 
                 page_token = response.get("nextPageToken")
@@ -304,13 +322,15 @@ class Crawling:
                     break
 
             # update json
-            v['collected'] = True
-            with open(video_data_path, 'w') as f:
+            v["collected"] = True
+            with open(video_data_path, "w") as f:
                 json.dump(video_data, f, indent=4)
-            print(f"\tprogress saved. '{v['video_title']}' marked as collected. Currently: {num_comments_count} comments.")
+            print(
+                f"\tprogress saved. '{v['video_title']}' marked as collected. Currently: {num_comments_count} comments."
+            )
 
         print(f"saving...")
-        df.to_csv(f'{path}comments_0_{limit}_new.csv')
+        df.to_csv(f"{path}comments_0_{limit}_new.csv")
 
     ##
     # UPLOADS WITHOUT SHORTS
@@ -318,10 +338,14 @@ class Crawling:
 
     def _get_uploads_id(self, channel):
 
-        response = self.youtube.channels().list(
-            part="contentDetails",
-            id=channel["channel_id"],
-        ).execute()
+        response = (
+            self.youtube.channels()
+            .list(
+                part="contentDetails",
+                id=channel["channel_id"],
+            )
+            .execute()
+        )
 
         return response["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
 
@@ -329,15 +353,20 @@ class Crawling:
         video_ids = []
         next_page_token = None
         while True:
-            response = self.youtube.playlistItems().list(
-                part="contentDetails",
-                playlistId=playlist_id,
-                maxResults=50,
-                pageToken=next_page_token
-            ).execute()
+            response = (
+                self.youtube.playlistItems()
+                .list(
+                    part="contentDetails",
+                    playlistId=playlist_id,
+                    maxResults=50,
+                    pageToken=next_page_token,
+                )
+                .execute()
+            )
 
-            video_ids.extend([item["contentDetails"]["videoId"]
-                             for item in response["items"]])
+            video_ids.extend(
+                [item["contentDetails"]["videoId"] for item in response["items"]]
+            )
             next_page_token = response.get("nextPageToken")
 
             if not next_page_token:
@@ -348,19 +377,24 @@ class Crawling:
     def _get_video_details(self, video_ids):
         videos = []
 
-        start_date_limit = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc) # 01 jan 24
-        end_date_limit = datetime(2024, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc) # 31 dez 24
+        start_date_limit = datetime(
+            2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc
+        )  # 01 jan 24
+        end_date_limit = datetime(
+            2024, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc
+        )  # 31 dez 24
 
         counter = 0
         for i in range(0, len(video_ids), 50):
-            batch = video_ids[i:i+50]
+            batch = video_ids[i : i + 50]
 
-            response = self.youtube.videos().list(
-                part="snippet,contentDetails,statistics",
-                id=",".join(batch)
-            ).execute()
+            response = (
+                self.youtube.videos()
+                .list(part="snippet,contentDetails,statistics", id=",".join(batch))
+                .execute()
+            )
 
-            for item in response.get('items', []):
+            for item in response.get("items", []):
                 # duration = parse_duration(item['contentDetails']['duration']).total_seconds()
 
                 # adjust according to ytbs (lives and shorts)
@@ -368,22 +402,28 @@ class Crawling:
                 duration_filter = True
 
                 # filter video to the year 2024
-                video_published_date = datetime.fromisoformat(item['snippet']['publishedAt'][:-1] + '+00:00')
+                video_published_date = datetime.fromisoformat(
+                    item["snippet"]["publishedAt"][:-1] + "+00:00"
+                )
                 date_filter = start_date_limit <= video_published_date <= end_date_limit
                 # date_filter = True
 
                 if date_filter and duration_filter:  # filter only videos of 2024
-                    videos.append({
-                        "video_id": item['id'],
-                        "date_published": item['snippet']['publishedAt'],
-                        "video_title": item['snippet']['title'],
-                        "video_desc": item['snippet'].get('description', ''),
-                        "view_count": item['statistics'].get('viewCount', '0'),
-                        "like_count": item['statistics'].get('likeCount', '0'),
-                        "comment_count": item['statistics'].get('commentCount', '0'),
-                        "collected" : False,
-                        "idx" : counter
-                    })
+                    videos.append(
+                        {
+                            "video_id": item["id"],
+                            "date_published": item["snippet"]["publishedAt"],
+                            "video_title": item["snippet"]["title"],
+                            "video_desc": item["snippet"].get("description", ""),
+                            "view_count": item["statistics"].get("viewCount", "0"),
+                            "like_count": item["statistics"].get("likeCount", "0"),
+                            "comment_count": item["statistics"].get(
+                                "commentCount", "0"
+                            ),
+                            "collected": False,
+                            "idx": counter,
+                        }
+                    )
                     counter += 1
 
         return videos
@@ -396,8 +436,10 @@ class Crawling:
         with open(YOUTUBERS_PATH) as f:
             youtubers_list = json.load(f)
 
-        for channel in youtubers_list[9:10]: # 3:4 zackd
-            print(f"Crawling info from: {channel['channel_title']}, {channel['youtuber']}...")
+        for channel in youtubers_list[9:10]:  # 3:4 zackd
+            print(
+                f"Crawling info from: {channel['channel_title']}, {channel['youtuber']}..."
+            )
             try:
                 upload_id = self._get_uploads_id(channel)
                 print(f"got upload id {upload_id}")
@@ -410,10 +452,10 @@ class Crawling:
                     "channel_title": channel["channel_title"],
                     "channel_id": channel["channel_id"],
                     "youtuber": channel["youtuber"],
-                    "videos": videos
+                    "videos": videos,
                 }
 
-                _path = CRAWLER_PATH+channel['youtuber']
+                _path = CRAWLER_PATH + channel["youtuber"]
                 os.makedirs(_path, exist_ok=True)
                 with open(f"{_path}/videos_list.json", "w") as f:
                     json.dump(channel_data, f, indent=4)
