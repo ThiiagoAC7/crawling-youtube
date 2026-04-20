@@ -19,7 +19,7 @@ from .parser import *
 
 
 class Crawling:
-    def __init__(self, channel_ids=None, youtubers=None, api_key=None):
+    def __init__(self, channel_ids=None, youtubers=None, api_key=None, output_dir=None):
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "0"
 
         self._api_service_name = "youtube"
@@ -29,9 +29,11 @@ class Crawling:
         self.channel_ids = channel_ids if channel_ids is not None else CHANNEL_IDS_LIST
         self.youtubers = youtubers if youtubers is not None else YTBRS_LIST
         self.api_key = api_key if api_key is not None else DEVELOPER_KEY
+        self.crawler_path = output_dir if output_dir is not None else CRAWLER_PATH
+        self.youtubers_path = self.crawler_path + "youtubers.json"
 
-        if not os.path.exists(CRAWLER_PATH):
-            os.makedirs(CRAWLER_PATH)
+        if not os.path.exists(self.crawler_path):
+            os.makedirs(self.crawler_path)
 
         self._build_youtube_client()
 
@@ -64,8 +66,8 @@ class Crawling:
             ytbr_data = parse_channel_info(response)
             youtubers.append(ytbr_data)
 
-        print(f"got channels info. saving at {YOUTUBERS_PATH}")
-        save_data_to_json(youtubers, YOUTUBERS_PATH)
+        print(f"got channels info. saving at {self.youtubers_path}")
+        save_data_to_json(youtubers, self.youtubers_path)
 
     ##
     # CHANNEL LIST FROM ID
@@ -92,8 +94,8 @@ class Crawling:
                 ytbr_data = parse_channel_info(response)
                 youtubers.append(ytbr_data)
 
-        print(f"got channels info. saving at {YOUTUBERS_PATH}")
-        save_data_to_json(youtubers, YOUTUBERS_PATH)
+        print(f"got channels info. saving at {self.youtubers_path}")
+        save_data_to_json(youtubers, self.youtubers_path)
 
     ##
     # VIDEOS LIST
@@ -104,11 +106,11 @@ class Crawling:
         builds youtubers_videos_list json dataset
         with latest videos_data for each youtuber specified
         """
-        if not os.path.exists(YOUTUBERS_PATH):
+        if not os.path.exists(self.youtubers_path):
             self.build_channels_list()
 
         youtubers_list = []
-        with open(YOUTUBERS_PATH) as f:
+        with open(self.youtubers_path) as f:
             youtubers_list = json.load(f)
 
         for channel in youtubers_list:
@@ -127,7 +129,7 @@ class Crawling:
 
             response = request.execute()
 
-            _path = CRAWLER_PATH + channel["youtuber"]
+            _path = self.crawler_path + channel["youtuber"]
             os.makedirs(_path, exist_ok=True)
             parse_search_videos(response, channel, _path)
 
@@ -165,8 +167,8 @@ class Crawling:
         data = []
 
         # getting youtuber folders
-        for item in os.listdir(CRAWLER_PATH):
-            _item_path = os.path.join(CRAWLER_PATH, item)
+        for item in os.listdir(self.crawler_path):
+            _item_path = os.path.join(self.crawler_path, item)
             if os.path.isdir(_item_path):
                 data.append(_item_path + "/")
         return data
@@ -429,11 +431,11 @@ class Crawling:
         return videos
 
     def build_youtubers_videos_list_from_uploads(self):
-        if not os.path.exists(YOUTUBERS_PATH):
+        if not os.path.exists(self.youtubers_path):
             self.build_channels_list()
 
         youtubers_list = []
-        with open(YOUTUBERS_PATH) as f:
+        with open(self.youtubers_path) as f:
             youtubers_list = json.load(f)
 
         for channel in youtubers_list[9:10]:  # 3:4 zackd
@@ -455,7 +457,7 @@ class Crawling:
                     "videos": videos,
                 }
 
-                _path = CRAWLER_PATH + channel["youtuber"]
+                _path = self.crawler_path + channel["youtuber"]
                 os.makedirs(_path, exist_ok=True)
                 with open(f"{_path}/videos_list.json", "w") as f:
                     json.dump(channel_data, f, indent=4)

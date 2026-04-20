@@ -7,8 +7,13 @@ from constants import CRAWLER_PATH
 from crawler.crawling import Crawling
 
 
-def run_crawler(channel_ids=None, youtubers=None, api_key=None):
-    craw = Crawling(channel_ids=channel_ids, youtubers=youtubers, api_key=api_key)
+def run_crawler(channel_ids=None, youtubers=None, api_key=None, output_dir=None):
+    craw = Crawling(
+        channel_ids=channel_ids,
+        youtubers=youtubers,
+        api_key=api_key,
+        output_dir=output_dir,
+    )
     # craw.build_channels_list()
     # craw.build_channels_list_from_id()
     # craw.build_youtubers_videos_list_from_uploads()
@@ -138,12 +143,14 @@ def main():
         "--youtubers", nargs="+", help="list of youtuber handles (e.g. @caseoh_)"
     )
     parser.add_argument("--api-key", help="youtube data API key")
+    parser.add_argument("--output-dir", help="output directory for collected data")
     args = parser.parse_args()
 
     run_crawler(
         channel_ids=args.channel_ids,
         youtubers=args.youtubers,
         api_key=args.api_key,
+        output_dir=args.output_dir,
     )
 
 
