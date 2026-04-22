@@ -24,4 +24,5 @@ pixi run main
 
 ## TODO
 
-- [ ] api key rotation handler
+- [x] api key rotation handler
+- [ ] better error handling for when all api keys are used -> do this outside crawling.py 

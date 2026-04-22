@@ -13,7 +13,7 @@ from constants import (
     YTBRS_LIST,
 )
 
-from .api_manager import YouTubeAPIManager
+from .api_manager import QuotaExhaustedError, YouTubeAPIManager
 from .parser import *
 
 
@@ -226,77 +226,91 @@ class Crawling:
 
         num_requests = 0
         num_comments_count = 0
-        for v in video_data["videos"][:limit]:  # first 50 videos
-            _count = 0
+        try:
+            for v in video_data["videos"][:limit]:  # first 50 videos
+                _count = 0
 
-            if v["collected"]:  # skip collected vids
-                continue
+                if v["collected"]:  # skip collected vids
+                    continue
 
-            if (filter_ids) and (v["video_id"] not in filter_ids):
-                print(f"not in selected videos:{v['video_id']}")
-                continue
+                if (filter_ids) and (v["video_id"] not in filter_ids):
+                    print(f"not in selected videos:{v['video_id']}")
+                    continue
 
-            if int(v["comment_count"]) == 0:
-                print("Skipping video, 0 comments ...")
-                v["collected"] = True
-                continue
+                if int(v["comment_count"]) == 0:
+                    print("Skipping video, 0 comments ...")
+                    v["collected"] = True
+                    continue
 
-            print(f"\tcomments from {v['video_id']}, {v['video_title']}")
-            while True:  # to get next pages if nextPageToken != None
-                _count += 1
-                method_func = lambda client, **kw: client.commentThreads().list(**kw)
-                try:
-                    response = self.api_manager.make_request(
-                        method_func,
-                        part="snippet,replies,id",
-                        videoId=v["video_id"],
-                        maxResults=100,
-                        pageToken=page_token,
-                        order="time",
-                        textFormat="plainText",
+                print(f"\tcomments from {v['video_id']}, {v['video_title']}")
+                while True:  # to get next pages if nextPageToken != None
+                    _count += 1
+                    method_func = lambda client, **kw: client.commentThreads().list(
+                        **kw
                     )
-                    num_requests += 1
-                except googleapiclient.errors.HttpError as e:
-                    if e.error_details[0]["reason"] == "commentsDisabled":
+                    try:
+                        response = self.api_manager.make_request(
+                            method_func,
+                            part="snippet,replies,id",
+                            videoId=v["video_id"],
+                            maxResults=100,
+                            pageToken=page_token,
+                            order="time",
+                            textFormat="plainText",
+                        )
+                        num_requests += 1
+                    except googleapiclient.errors.HttpError as e:
+                        if e.error_details[0]["reason"] == "commentsDisabled":
+                            print(
+                                f"skipping current video: {e.error_details[0]['message']}"
+                            )
+                            break
+                        raise
+
+                    if response:
                         print(
-                            f"skipping current video: {e.error_details[0]['message']}"
+                            f"\t\tparsing comments and appending to dataframe, page {_count}, req {num_requests}"
                         )
+                        _d, comments_many_replies_ids = parse_comment_threads(
+                            response, v["video_id"], v["video_title"], video_data_path
+                        )
+                        df = pd.concat([df, pd.DataFrame(_d)], ignore_index=True)
+                        if comments_many_replies_ids != []:
+                            # commentThread endpoint only returns 5 replies per comment!
+                            repl_df = self._get_replies_from_parent_ids(
+                                comments_many_replies_ids,
+                                v["video_id"],
+                                v["video_title"],
+                            )
+                            df = pd.concat([df, repl_df], ignore_index=True)
+
+                        num_comments_count = len(df)
+
+                    page_token = response.get("nextPageToken")
+                    if not page_token:  # if next comment page doesnt exist, break
                         break
-                    raise
 
-                if response:
-                    print(
-                        f"\t\tparsing comments and appending to dataframe, page {_count}, req {num_requests}"
-                    )
-                    _d, comments_many_replies_ids = parse_comment_threads(
-                        response, v["video_id"], v["video_title"], video_data_path
-                    )
-                    df = pd.concat([df, pd.DataFrame(_d)], ignore_index=True)
-                    if comments_many_replies_ids != []:
-                        # commentThread endpoint only returns 5 replies per comment!
-                        repl_df = self._get_replies_from_parent_ids(
-                            comments_many_replies_ids,
-                            v["video_id"],
-                            v["video_title"],
-                        )
-                        df = pd.concat([df, repl_df], ignore_index=True)
+                # update json
+                v["collected"] = True
+                with open(video_data_path, "w") as f:
+                    json.dump(video_data, f, indent=4)
+                print(
+                    f"\tprogress saved. '{v['video_title']}' marked as collected. Currently: {num_comments_count} comments."
+                )
 
-                    num_comments_count = len(df)
+            print("saving...")
+            df.to_csv(f"{path}comments_0_{limit}_new.csv")
 
-                page_token = response.get("nextPageToken")
-                if not page_token:  # if next comment page doesnt exist, break
-                    break
+        except QuotaExhaustedError:
+            print("\n" + "=" * 50)
+            print("all api keys exhausted. saving current progress...")
+            partial_path = f"{path}comments_0_{limit}_partial.csv"
+            df.to_csv(partial_path, index=False)
+            print(f"partial progress saved to: {partial_path}")
 
-            # update json
-            v["collected"] = True
             with open(video_data_path, "w") as f:
                 json.dump(video_data, f, indent=4)
-            print(
-                f"\tprogress saved. '{v['video_title']}' marked as collected. Currently: {num_comments_count} comments."
-            )
-
-        print(f"saving...")
-        df.to_csv(f"{path}comments_0_{limit}_new.csv")
+            print("videos_list.json updated. resumable state saved.")
 
     ##
     # UPLOADS WITHOUT SHORTS
