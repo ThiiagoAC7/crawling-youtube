@@ -138,6 +138,7 @@ def verify_videos():
 
 def main():
     parser = argparse.ArgumentParser(description="YouTube crawler")
+    parser.add_argument("--config", help="path to JSON config file")
     parser.add_argument("--channel-ids", nargs="+", help="list of channel IDs")
     parser.add_argument(
         "--youtubers", nargs="+", help="list of youtuber handles (e.g. @caseoh_)"
@@ -146,11 +147,16 @@ def main():
     parser.add_argument("--output-dir", help="output directory for collected data")
     args = parser.parse_args()
 
+    config = {}
+    if args.config:
+        with open(args.config, "r", encoding="utf-8") as f:
+            config = json.load(f)
+
     run_crawler(
-        channel_ids=args.channel_ids,
-        youtubers=args.youtubers,
-        api_key=args.api_key,
-        output_dir=args.output_dir,
+        channel_ids=config.get("channel_ids", args.channel_ids),
+        youtubers=config.get("youtubers", args.youtubers),
+        api_key=config.get("api_key", args.api_key),
+        output_dir=config.get("output_dir", args.output_dir),
     )
 
 
