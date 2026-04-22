@@ -2,45 +2,38 @@ import json
 import os
 from datetime import datetime, timezone
 
-import googleapiclient.discovery
 import googleapiclient.errors
 import pandas as pd
-from isodate import parse_duration
 
 from constants import (
     CHANNEL_IDS_LIST,
     CRAWLER_PATH,
-    DEVELOPER_KEY,
+    DEVELOPER_KEYS,
     YOUTUBERS_PATH,
     YTBRS_LIST,
 )
 
+from .api_manager import YouTubeAPIManager
 from .parser import *
 
 
 class Crawling:
-    def __init__(self, channel_ids=None, youtubers=None, api_key=None, output_dir=None):
+    def __init__(
+        self, channel_ids=None, youtubers=None, api_keys=None, output_dir=None
+    ):
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "0"
-
-        self._api_service_name = "youtube"
-        self._api_version = "v3"
 
         self.yt_channel_ids = []
         self.channel_ids = channel_ids if channel_ids is not None else CHANNEL_IDS_LIST
         self.youtubers = youtubers if youtubers is not None else YTBRS_LIST
-        self.api_key = api_key if api_key is not None else DEVELOPER_KEY
+        self.api_keys = api_keys if api_keys is not None else DEVELOPER_KEYS
         self.crawler_path = output_dir if output_dir is not None else CRAWLER_PATH
         self.youtubers_path = self.crawler_path + "youtubers.json"
 
         if not os.path.exists(self.crawler_path):
             os.makedirs(self.crawler_path)
 
-        self._build_youtube_client()
-
-    def _build_youtube_client(self):
-        self.youtube = googleapiclient.discovery.build(
-            self._api_service_name, self._api_version, developerKey=self.api_key
-        )
+        self.api_manager = YouTubeAPIManager(self.api_keys)
 
     ##
     # CHANNELS LIST
@@ -54,15 +47,13 @@ class Crawling:
         for name in self.youtubers:
             print(f"Crawling info from @{name} ...")
 
-            # make request to yt API with channel user @
-            request = self.youtube.channels().list(
+            method_func = lambda client, **kw: client.channels().list(**kw)
+            response = self.api_manager.make_request(
+                method_func,
                 part="snippet,contentDetails,statistics",
                 forHandle=name,
             )
 
-            response = request.execute()
-
-            # saving data as json to ./data/{youtuber name}
             ytbr_data = parse_channel_info(response)
             youtubers.append(ytbr_data)
 
@@ -80,17 +71,16 @@ class Crawling:
         for id in self.channel_ids:
             print(f"Crawling info from @{id} ...")
 
-            # make request to yt API with channel user @
-            request = self.youtube.channels().list(
-                part="snippet,contentDetails,statistics", id=id
+            method_func = lambda client, **kw: client.channels().list(**kw)
+            response = self.api_manager.make_request(
+                method_func,
+                part="snippet,contentDetails,statistics",
+                id=id,
             )
-
-            response = request.execute()
 
             print(response)
 
             if response["pageInfo"]["totalResults"] > 0:
-                # saving data as json to ./data/{youtuber name}
                 ytbr_data = parse_channel_info(response)
                 youtubers.append(ytbr_data)
 
@@ -118,16 +108,15 @@ class Crawling:
                 f"Crawling info from : {channel['channel_title']}, @{channel['youtuber']} ..."
             )
 
-            # get only videos by channel id
-            request = self.youtube.search().list(
+            method_func = lambda client, **kw: client.search().list(**kw)
+            response = self.api_manager.make_request(
+                method_func,
                 part="snippet",
                 channelId=channel["channel_id"],
-                order="date",  # viewcount
+                order="date",
                 type="video",
                 maxResults=50,
             )
-
-            response = request.execute()
 
             _path = self.crawler_path + channel["youtuber"]
             os.makedirs(_path, exist_ok=True)
@@ -187,31 +176,23 @@ class Crawling:
         for id in parent_ids:
             while True:
                 _count += 1
-                # gets replies from current parent id
-                request = self.youtube.comments().list(
-                    part="snippet,id",
-                    maxResults=100,
-                    pageToken=page_token,
-                    parentId=id,
-                    textFormat="plainText",
-                )
-
-                response = {}
+                method_func = lambda client, **kw: client.comments().list(**kw)
                 try:
-                    response = request.execute()
+                    response = self.api_manager.make_request(
+                        method_func,
+                        part="snippet,id",
+                        maxResults=100,
+                        pageToken=page_token,
+                        parentId=id,
+                        textFormat="plainText",
+                    )
                 except googleapiclient.errors.HttpError as e:
                     if e.error_details[0]["reason"] == "commentNotFound":
                         print(
                             f"skipping current comment: {e.error_details[0]['message']}"
                         )
-                    if e.error_details[0]["reason"] == "quotaExceeded":
-                        print("\n" + "=" * 50)
-                        print("ERRO: Quota diária da API do YouTube foi atingida.")
-                        print(
-                            "Salvando todo o progresso dos comentários coletados até agora..."
-                        )
-
-                        return df
+                        break
+                    raise
 
                 if response:
                     print(f"\t\tparsing comment replies ... {_count}")
@@ -224,7 +205,7 @@ class Crawling:
                     )
                     df = pd.concat([df, pd.DataFrame(_d)], ignore_index=True)
                 page_token = response.get("nextPageToken")
-                if not page_token:  # if next comment page doesnt exist, break
+                if not page_token:
                     break
 
         return df
@@ -242,7 +223,6 @@ class Crawling:
         page_token = None  # video's comment section has many pages
 
         print(f"Collecting the first {limit} videos (if not collected already)")
-        api_error = False
 
         num_requests = 0
         num_comments_count = 0
@@ -257,49 +237,33 @@ class Crawling:
                 continue
 
             if int(v["comment_count"]) == 0:
-                print(f"Skipping video, 0 comments ...")
+                print("Skipping video, 0 comments ...")
                 v["collected"] = True
                 continue
-
-            if api_error:
-                break
 
             print(f"\tcomments from {v['video_id']}, {v['video_title']}")
             while True:  # to get next pages if nextPageToken != None
                 _count += 1
-                # gets comment from current video v
-                request = self.youtube.commentThreads().list(
-                    part="snippet,replies,id",
-                    videoId=v["video_id"],
-                    maxResults=100,
-                    pageToken=page_token,
-                    order="time",  # has to be time, 'relevance' doesnt bring all comments
-                    textFormat="plainText",
-                )
-
-                response = {}
+                method_func = lambda client, **kw: client.commentThreads().list(**kw)
                 try:
-                    response = request.execute()
+                    response = self.api_manager.make_request(
+                        method_func,
+                        part="snippet,replies,id",
+                        videoId=v["video_id"],
+                        maxResults=100,
+                        pageToken=page_token,
+                        order="time",
+                        textFormat="plainText",
+                    )
                     num_requests += 1
                 except googleapiclient.errors.HttpError as e:
                     if e.error_details[0]["reason"] == "commentsDisabled":
                         print(
                             f"skipping current video: {e.error_details[0]['message']}"
                         )
-                    if e.error_details[0]["reason"] == "quotaExceeded":
-                        print("\n" + "=" * 50)
-                        print("ERRO: Quota diária da API do YouTube foi atingida.")
-                        print(
-                            "Salvando todo o progresso dos comentários coletados até agora..."
-                        )
-
-                        comments_output_path = f"{path}comments_QUOTAERROR.csv"
-                        df.to_csv(comments_output_path, index=False)
-                        print(f"Progresso salvo em: {comments_output_path}")
-                        api_error = True
                         break
+                    raise
 
-                # parses response, with selected params
                 if response:
                     print(
                         f"\t\tparsing comments and appending to dataframe, page {_count}, req {num_requests}"
@@ -339,14 +303,11 @@ class Crawling:
     ##
 
     def _get_uploads_id(self, channel):
-
-        response = (
-            self.youtube.channels()
-            .list(
-                part="contentDetails",
-                id=channel["channel_id"],
-            )
-            .execute()
+        method_func = lambda client, **kw: client.channels().list(**kw)
+        response = self.api_manager.make_request(
+            method_func,
+            part="contentDetails",
+            id=channel["channel_id"],
         )
 
         return response["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
@@ -355,15 +316,13 @@ class Crawling:
         video_ids = []
         next_page_token = None
         while True:
-            response = (
-                self.youtube.playlistItems()
-                .list(
-                    part="contentDetails",
-                    playlistId=playlist_id,
-                    maxResults=50,
-                    pageToken=next_page_token,
-                )
-                .execute()
+            method_func = lambda client, **kw: client.playlistItems().list(**kw)
+            response = self.api_manager.make_request(
+                method_func,
+                part="contentDetails",
+                playlistId=playlist_id,
+                maxResults=50,
+                pageToken=next_page_token,
             )
 
             video_ids.extend(
@@ -390,10 +349,11 @@ class Crawling:
         for i in range(0, len(video_ids), 50):
             batch = video_ids[i : i + 50]
 
-            response = (
-                self.youtube.videos()
-                .list(part="snippet,contentDetails,statistics", id=",".join(batch))
-                .execute()
+            method_func = lambda client, **kw: client.videos().list(**kw)
+            response = self.api_manager.make_request(
+                method_func,
+                part="snippet,contentDetails,statistics",
+                id=",".join(batch),
             )
 
             for item in response.get("items", []):

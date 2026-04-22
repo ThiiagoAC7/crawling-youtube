@@ -3,15 +3,15 @@ import os
 import json
 import pandas as pd
 
-from constants import CRAWLER_PATH
+from constants import CRAWLER_PATH, DEVELOPER_KEYS
 from crawler.crawling import Crawling
 
 
-def run_crawler(channel_ids=None, youtubers=None, api_key=None, output_dir=None):
+def run_crawler(channel_ids=None, youtubers=None, api_keys=None, output_dir=None):
     craw = Crawling(
         channel_ids=channel_ids,
         youtubers=youtubers,
-        api_key=api_key,
+        api_keys=api_keys,
         output_dir=output_dir,
     )
     # craw.build_channels_list()
@@ -152,10 +152,21 @@ def main():
         with open(args.config, "r", encoding="utf-8") as f:
             config = json.load(f)
 
+    api_keys = DEVELOPER_KEYS
+    if args.api_key:
+        api_keys = [args.api_key]
+    if config.get("api_key"):
+        api_keys = [config["api_key"]]
+    if config.get("api_keys"):
+        api_keys = config["api_keys"]
+
+    if not api_keys:
+        raise ValueError("no api keys provided. use --api-key, --config, or .env")
+
     run_crawler(
         channel_ids=config.get("channel_ids", args.channel_ids),
         youtubers=config.get("youtubers", args.youtubers),
-        api_key=config.get("api_key", args.api_key),
+        api_keys=api_keys,
         output_dir=config.get("output_dir", args.output_dir),
     )
 
