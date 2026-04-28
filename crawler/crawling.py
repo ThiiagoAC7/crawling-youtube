@@ -111,18 +111,21 @@ class Crawling:
             return
 
         youtubers = []
+        print(self.youtubers)
         for name in self.youtubers:
             print(f"Crawling info from @{name} ...")
 
             method_func = lambda client, **kw: client.channels().list(**kw)
             response = self.api_manager.make_request(
-                method_func,
-                part="snippet,contentDetails,statistics",
-                forHandle=name,
+                method_func, part="snippet,contentDetails,statistics", forHandle=name
             )
 
-            ytbr_data = parse_channel_info(response)
-            youtubers.append(ytbr_data)
+            if response.get("items"):
+                ytbr_data = parse_channel_info(response)
+                youtubers.append(ytbr_data)
+            else:
+                print(response)
+                # todo: handle error
 
         print(f"got channels info. saving at {self.youtubers_path}")
         self._merge_and_save_youtubers(youtubers)
@@ -280,6 +283,25 @@ class Crawling:
 
         return df
 
+    def _save_comments(self, df, path, partial=False):
+        """
+        saves comments dataframe with timestamped filename.
+
+        params:
+        - df: comments dataframe
+        - path: youtuber directory path (e.g., ./data/@mrbeast/)
+        - partial: if True, appends '_partial' suffix
+
+        returns: full filepath of saved file
+        """
+        now = datetime.now()
+        ts = f"{now.year}_{now.month}_{now.day}_{now.hour}_{now.minute}"
+        suffix = "_partial" if partial else ""
+        filename = f"comments_{ts}{suffix}.csv"
+        filepath = os.path.join(path, filename)
+        df.to_csv(filepath, index=False)
+        return filepath
+
     def _get_comments_from_video_ids(
         self, video_data, video_data_path, path, limit=50, filter_ids=[]
     ):
@@ -369,13 +391,13 @@ class Crawling:
                 )
 
             print("saving...")
-            df.to_csv(f"{path}comments_0_{limit}_new.csv")
+            saved_path = self._save_comments(df, path)
+            print(f"saved to: {saved_path}")
 
         except QuotaExhaustedError:
             print("\n" + "=" * 50)
             print("all api keys exhausted. saving current progress...")
-            partial_path = f"{path}comments_0_{limit}_partial.csv"
-            df.to_csv(partial_path, index=False)
+            partial_path = self._save_comments(df, path, partial=True)
             print(f"partial progress saved to: {partial_path}")
 
             with open(video_data_path, "w") as f:
@@ -443,7 +465,6 @@ class Crawling:
                     continue
                 if self.max_duration is not None and duration > self.max_duration:
                     continue
-
 
                 video_published_date = datetime.fromisoformat(
                     item["snippet"]["publishedAt"][:-1] + "+00:00"

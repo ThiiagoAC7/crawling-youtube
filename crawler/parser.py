@@ -4,6 +4,7 @@ import json
 parsing responses from youtube data api
 """
 
+
 def _parse_json(request):
     return json.dumps(request, indent=4)
 
@@ -17,7 +18,7 @@ def save_data_to_json(data, path):
 def parse_comment_threads(response, video_id, video_title, path):
     items = response["items"]
     comments_data = []
-    comments_many_replies_ids = [] # comments with more than 5 replies
+    comments_many_replies_ids = []  # comments with more than 5 replies
 
     for i in items:
         tlc = i["snippet"]["topLevelComment"]
@@ -25,25 +26,34 @@ def parse_comment_threads(response, video_id, video_title, path):
         _comment["video_id"] = video_id
         _comment["video_title"] = video_title
         _comment["comment_id"] = tlc["id"]
-        _comment["comment_text"] = tlc["snippet"]["textDisplay"]
+        _comment["comment_text"] = (
+            tlc["snippet"]["textDisplay"]
+            .replace("\r\n", " ")
+            .replace("\n", " ")
+            .replace("\r", " ")
+            .strip()
+        )
         # _comment["comment_author_name"] = tlc["snippet"]["authorDisplayName"]
-        _comment["comment_author_channel_id"] = tlc["snippet"]["authorChannelId"]["value"]
+        _comment["comment_author_channel_id"] = tlc["snippet"]["authorChannelId"][
+            "value"
+        ]
         _comment["comment_like_count"] = tlc["snippet"]["likeCount"]
         _comment["comment_publish_date"] = tlc["snippet"]["publishedAt"]
         _comment["comment_reply_count"] = i["snippet"]["totalReplyCount"]
-        _comment["is_reply"] = False 
+        _comment["is_reply"] = False
         _comment["parent_comment_id"] = 0
 
         comments_data.append(_comment)
 
         reply_count = int(i["snippet"]["totalReplyCount"])
-        replies = i.get('replies')
-        if replies and reply_count > 0 and reply_count <= 5 : # pra economizar requests
+        replies = i.get("replies")
+        if replies and reply_count > 0 and reply_count <= 5:  # pra economizar requests
             comments_data += parse_replies(replies, tlc["id"], video_id, video_title)
         elif reply_count > 5:
             comments_many_replies_ids.append(tlc["id"])
 
     return comments_data, comments_many_replies_ids
+
 
 def parse_replies(replies, parent_id, video_id, video_title, many=False):
     subcomments = replies.get("comments")
@@ -51,24 +61,33 @@ def parse_replies(replies, parent_id, video_id, video_title, many=False):
         subcomments = replies.get("items")
 
     subcomments_data = []
-    
+
     for s in subcomments:
         _subcomment = {}
         _subcomment["video_id"] = video_id
         _subcomment["video_title"] = video_title
         _subcomment["comment_id"] = s["id"]
-        _subcomment["comment_text"] = s["snippet"]["textDisplay"]
+        _subcomment["comment_text"] = (
+            s["snippet"]["textDisplay"]
+            .replace("\r\n", " ")
+            .replace("\n", " ")
+            .replace("\r", " ")
+            .strip()
+        )
         # _subcomment["comment_author_name"] = s["snippet"]["authorDisplayName"]
-        _subcomment["comment_author_channel_id"] = s["snippet"]["authorChannelId"]["value"]
+        _subcomment["comment_author_channel_id"] = s["snippet"]["authorChannelId"][
+            "value"
+        ]
         _subcomment["comment_like_count"] = s["snippet"]["likeCount"]
         _subcomment["comment_publish_date"] = s["snippet"]["publishedAt"]
-        _subcomment["comment_reply_count"] = 0 
+        _subcomment["comment_reply_count"] = 0
         _subcomment["is_reply"] = True
-        _subcomment["parent_comment_id"] = parent_id 
+        _subcomment["parent_comment_id"] = parent_id
 
         subcomments_data.append(_subcomment)
 
     return subcomments_data
+
 
 def parse_search_videos(response, channel, path):
     videos_data = {}

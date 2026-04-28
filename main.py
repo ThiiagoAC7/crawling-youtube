@@ -8,9 +8,7 @@ from constants import CRAWLER_PATH, DEVELOPER_KEYS
 from crawler.crawling import Crawling
 
 
-def run_crawler(
-    channel_ids=None, youtubers=None, api_keys=None, output_dir=None, filters=None
-):
+def run_crawler(channel_ids, youtubers, api_keys, output_dir, filters):
     craw = Crawling(
         channel_ids=channel_ids,
         youtubers=youtubers,
@@ -40,8 +38,7 @@ def modificar_videos_json(arquivo_entrada, arquivo_saida):
     print(f"Arquivo '{arquivo_saida}' salvo com sucesso!")
 
 
-def update_json():
-    yt = "@jordanmatter"
+def update_json(yt):
     path = f"./data/{yt}/comments.csv"
 
     df = pd.read_csv(path)
@@ -96,7 +93,7 @@ def merge_datasets(path):
 
     print(f"Total comments before deduplication: {len(merged_df)}")
 
-    merged_df.drop_duplicates(inplace=True, ignore_index=True)
+    merged_df.drop_duplicates(subset=["comment_id"], inplace=True, ignore_index=True)
 
     print(f"Final video IDs: {list(merged_df['video_id'].unique())}")
     print(f"Total comments after deduplication: {len(merged_df)}")
@@ -109,13 +106,12 @@ def merge_datasets(path):
     return merged_df
 
 
-def verify_videos():
-    yt = "@cristiano"
+def verify_videos(yt):
 
     with open(f"./data/{yt}/videos_list.json", "r") as f:
         dados = json.load(f)
 
-    df = pd.read_csv(f"./data/{yt}/comments_all.csv")
+    df = pd.read_csv(f"./data/{yt}/comments.csv")
     video_ids = df["video_id"].unique()
     del df
 
@@ -144,9 +140,15 @@ def verify_videos():
 def main():
     parser = argparse.ArgumentParser(description="YouTube crawler")
     parser.add_argument("--config", help="path to JSON config file")
-    parser.add_argument("--channel-ids", nargs="+", help="list of channel IDs")
     parser.add_argument(
-        "--youtubers", nargs="+", help="list of youtuber handles (e.g. @caseoh_)"
+        "--channel-ids",
+        nargs="+",
+        help="list of space separated channel IDs (e.g. UC1...  UC2...)",
+    )
+    parser.add_argument(
+        "--youtubers",
+        nargs="+",
+        help="list of space separated youtuber handles (e.g. caseoh_ MrBeast)",
     )
     parser.add_argument("--api-key", help="youtube data API key")
     parser.add_argument("--output-dir", help="output directory for collected data")

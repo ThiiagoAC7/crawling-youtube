@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 
 # list of youtuber names as they appear in their channels url handle
-YTBRS_LIST = ["@caseoh_"]
+YTBRS_LIST = []
 
 CHANNEL_IDS_LIST = []
 
