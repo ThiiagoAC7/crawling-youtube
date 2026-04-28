@@ -1,23 +1,28 @@
 import argparse
-import os
 import json
+import os
+
 import pandas as pd
 
 from constants import CRAWLER_PATH, DEVELOPER_KEYS
 from crawler.crawling import Crawling
 
 
-def run_crawler(channel_ids=None, youtubers=None, api_keys=None, output_dir=None):
+def run_crawler(
+    channel_ids=None, youtubers=None, api_keys=None, output_dir=None, filters=None
+):
     craw = Crawling(
         channel_ids=channel_ids,
         youtubers=youtubers,
         api_keys=api_keys,
         output_dir=output_dir,
+        filters=filters,
     )
-    # craw.build_channels_list()
-    # craw.build_channels_list_from_id()
-    # craw.build_youtubers_videos_list_from_uploads()
-    craw.build_videos_comments_df(limit=750)
+    craw.build_channels_list()
+    if channel_ids:
+        craw.build_channels_list_from_id()
+    craw.build_youtubers_videos_list_from_uploads()
+    craw.build_videos_comments_df()
 
 
 def modificar_videos_json(arquivo_entrada, arquivo_saida):
@@ -145,6 +150,19 @@ def main():
     )
     parser.add_argument("--api-key", help="youtube data API key")
     parser.add_argument("--output-dir", help="output directory for collected data")
+    parser.add_argument(
+        "--start-date",
+        help="filter videos published on or after this date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--end-date", help="filter videos published on or before this date (YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--min-duration", type=int, help="filter videos with duration >= N seconds"
+    )
+    parser.add_argument(
+        "--max-duration", type=int, help="filter videos with duration <= N seconds"
+    )
     args = parser.parse_args()
 
     config = {}
@@ -155,19 +173,30 @@ def main():
     api_keys = DEVELOPER_KEYS
     if args.api_key:
         api_keys = [args.api_key]
-    if config.get("api_key"):
-        api_keys = [config["api_key"]]
     if config.get("api_keys"):
         api_keys = config["api_keys"]
 
     if not api_keys:
         raise ValueError("no api keys provided. use --api-key, --config, or .env")
 
+    _config_filters = config.get("filters", {})
+    filters = {
+        k: v
+        for k, v in {
+            "start_date": args.start_date or _config_filters.get("start_date"),
+            "end_date": args.end_date or _config_filters.get("end_date"),
+            "min_duration": args.min_duration or _config_filters.get("min_duration"),
+            "max_duration": args.max_duration or _config_filters.get("max_duration"),
+        }.items()
+        if v is not None
+    }
+
     run_crawler(
         channel_ids=config.get("channel_ids", args.channel_ids),
         youtubers=config.get("youtubers", args.youtubers),
         api_keys=api_keys,
         output_dir=config.get("output_dir", args.output_dir),
+        filters=filters if filters else None,
     )
 
 

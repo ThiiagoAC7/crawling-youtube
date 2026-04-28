@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timezone
 
 import googleapiclient.errors
+import isodate
 import pandas as pd
 
 from constants import (
@@ -19,7 +20,12 @@ from .parser import *
 
 class Crawling:
     def __init__(
-        self, channel_ids=None, youtubers=None, api_keys=None, output_dir=None
+        self,
+        channel_ids=None,
+        youtubers=None,
+        api_keys=None,
+        output_dir=None,
+        filters=None,
     ):
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "0"
 
@@ -30,10 +36,68 @@ class Crawling:
         self.crawler_path = output_dir if output_dir is not None else CRAWLER_PATH
         self.youtubers_path = self.crawler_path + "youtubers.json"
 
+        _filters = filters or {}
+        self.start_date = self._parse_date(_filters.get("start_date"), "2005-01-01")
+        self.end_date = self._parse_date(_filters.get("end_date"), None)
+        self.min_duration = _filters.get("min_duration")
+        self.max_duration = _filters.get("max_duration")
+
         if not os.path.exists(self.crawler_path):
             os.makedirs(self.crawler_path)
 
         self.api_manager = YouTubeAPIManager(self.api_keys)
+
+    def _parse_date(self, date_str, default):
+        """
+        parses a date string in YYYY-MM-DD format.
+        if default is None, returns current utc datetime.
+        """
+        if date_str:
+            return datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        if default is None:
+            return datetime.now(timezone.utc)
+        return datetime.strptime(default, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+    def _merge_and_save_youtubers(self, new_youtubers):
+        """
+        merges new_youtubers into existing youtubers.json,
+        deduplicating by channel_id.
+        """
+        existing = []
+        if os.path.exists(self.youtubers_path):
+            with open(self.youtubers_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+
+        seen = {ch["channel_id"] for ch in existing}
+        merged = existing.copy()
+        for ch in new_youtubers:
+            if ch["channel_id"] not in seen:
+                merged.append(ch)
+                seen.add(ch["channel_id"])
+
+        save_data_to_json(merged, self.youtubers_path)
+
+    def _all_channels_present(self, identifiers, key_field):
+        """
+        checks if youtubers.json exists and contains all identifiers.
+
+        params:
+        - identifiers: list of identifiers to check (handles or channel ids)
+        - key_field: field in youtubers.json to match against
+
+        returns: True if all present, False if build needed
+        """
+        if not identifiers:
+            return True
+
+        if not os.path.exists(self.youtubers_path):
+            return False
+
+        with open(self.youtubers_path, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+
+        existing_values = {ch[key_field] for ch in existing}
+        return set(identifiers).issubset(existing_values)
 
     ##
     # CHANNELS LIST
@@ -43,6 +107,9 @@ class Crawling:
         """
         builds youtubers_channel_list dataset
         """
+        if self._all_channels_present(self.youtubers, "youtuber"):
+            return
+
         youtubers = []
         for name in self.youtubers:
             print(f"Crawling info from @{name} ...")
@@ -58,7 +125,7 @@ class Crawling:
             youtubers.append(ytbr_data)
 
         print(f"got channels info. saving at {self.youtubers_path}")
-        save_data_to_json(youtubers, self.youtubers_path)
+        self._merge_and_save_youtubers(youtubers)
 
     ##
     # CHANNEL LIST FROM ID
@@ -67,6 +134,9 @@ class Crawling:
         """
         builds youtubers_channel_list dataset
         """
+        if self._all_channels_present(self.channel_ids, "channel_id"):
+            return
+
         youtubers = []
         for id in self.channel_ids:
             print(f"Crawling info from @{id} ...")
@@ -85,7 +155,7 @@ class Crawling:
                 youtubers.append(ytbr_data)
 
         print(f"got channels info. saving at {self.youtubers_path}")
-        save_data_to_json(youtubers, self.youtubers_path)
+        self._merge_and_save_youtubers(youtubers)
 
     ##
     # VIDEOS LIST
@@ -352,13 +422,6 @@ class Crawling:
     def _get_video_details(self, video_ids):
         videos = []
 
-        start_date_limit = datetime(
-            2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc
-        )  # 01 jan 24
-        end_date_limit = datetime(
-            2024, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc
-        )  # 31 dez 24
-
         counter = 0
         for i in range(0, len(video_ids), 50):
             batch = video_ids[i : i + 50]
@@ -371,36 +434,39 @@ class Crawling:
             )
 
             for item in response.get("items", []):
-                # duration = parse_duration(item['contentDetails']['duration']).total_seconds()
+                duration = isodate.parse_duration(
+                    item["contentDetails"]["duration"]
+                ).total_seconds()
 
-                # adjust according to ytbs (lives and shorts)
-                # duration_filter = duration >= 0 and duration <= 99999
-                duration_filter = True
+                # filters by video length
+                if self.min_duration is not None and duration < self.min_duration:
+                    continue
+                if self.max_duration is not None and duration > self.max_duration:
+                    continue
 
-                # filter video to the year 2024
+
                 video_published_date = datetime.fromisoformat(
                     item["snippet"]["publishedAt"][:-1] + "+00:00"
                 )
-                date_filter = start_date_limit <= video_published_date <= end_date_limit
-                # date_filter = True
 
-                if date_filter and duration_filter:  # filter only videos of 2024
-                    videos.append(
-                        {
-                            "video_id": item["id"],
-                            "date_published": item["snippet"]["publishedAt"],
-                            "video_title": item["snippet"]["title"],
-                            "video_desc": item["snippet"].get("description", ""),
-                            "view_count": item["statistics"].get("viewCount", "0"),
-                            "like_count": item["statistics"].get("likeCount", "0"),
-                            "comment_count": item["statistics"].get(
-                                "commentCount", "0"
-                            ),
-                            "collected": False,
-                            "idx": counter,
-                        }
-                    )
-                    counter += 1
+                # filters by publish date
+                if not (self.start_date <= video_published_date <= self.end_date):
+                    continue
+
+                videos.append(
+                    {
+                        "video_id": item["id"],
+                        "date_published": item["snippet"]["publishedAt"],
+                        "video_title": item["snippet"]["title"],
+                        "video_desc": item["snippet"].get("description", ""),
+                        "view_count": item["statistics"].get("viewCount", "0"),
+                        "like_count": item["statistics"].get("likeCount", "0"),
+                        "comment_count": item["statistics"].get("commentCount", "0"),
+                        "collected": False,
+                        "idx": counter,
+                    }
+                )
+                counter += 1
 
         return videos
 
@@ -412,7 +478,7 @@ class Crawling:
         with open(self.youtubers_path) as f:
             youtubers_list = json.load(f)
 
-        for channel in youtubers_list[9:10]:  # 3:4 zackd
+        for channel in youtubers_list:
             print(
                 f"Crawling info from: {channel['channel_title']}, {channel['youtuber']}..."
             )
