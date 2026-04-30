@@ -19,6 +19,8 @@ from .parser import *
 
 
 class Crawling:
+    SAVE_EVERY_N_VIDEOS = 100
+
     def __init__(
         self,
         channel_ids=None,
@@ -108,6 +110,7 @@ class Crawling:
         builds youtubers_channel_list dataset
         """
         if self._all_channels_present(self.youtubers, "youtuber"):
+            print(f" all channels are present on youtubers.json ...")
             return
 
         youtubers = []
@@ -199,8 +202,8 @@ class Crawling:
     # COMMENTS DF
     ##
 
-    def build_videos_comments_df(self, limit=50):
-        datasets = self._get_youtuber_datasets_path()
+    def build_videos_comments_df(self, limit=10000, filter=[]):
+        datasets = self._get_youtuber_datasets_path(filter)
 
         # get each youtuber's videos dataset
         for path in datasets:
@@ -222,14 +225,23 @@ class Crawling:
                 limit=limit,
             )
 
-    def _get_youtuber_datasets_path(self):
+    def _get_youtuber_datasets_path(self, filter=[]):
         """
         returns all youtuber datasets path as a list
         """
         data = []
 
+        filter = [s.lower() for s in filter]  # for str comparison
+
         # getting youtuber folders
         for item in os.listdir(self.crawler_path):
+            if not item.startswith("@"):
+                continue
+
+            # remove @ from item path
+            if filter and item[1:] not in filter:
+                continue
+
             _item_path = os.path.join(self.crawler_path, item)
             if os.path.isdir(_item_path):
                 data.append(_item_path + "/")
@@ -283,7 +295,9 @@ class Crawling:
 
         return df
 
-    def _save_comments(self, df, path, partial=False):
+    def _save_comments(
+        self, df, path, partial=False, error=False, collected_video_ids=None
+    ):
         """
         saves comments dataframe with timestamped filename.
 
@@ -291,15 +305,35 @@ class Crawling:
         - df: comments dataframe
         - path: youtuber directory path (e.g., ./data/@mrbeast/)
         - partial: if True, appends '_partial' suffix
+        - error: if True, appends '_error' suffix
+        - collected_video_ids: list of video ids to mark as collected in videos_list.json
 
         returns: full filepath of saved file
         """
         now = datetime.now()
-        ts = f"{now.year}_{now.month}_{now.day}_{now.hour}_{now.minute}"
-        suffix = "_partial" if partial else ""
+        ts = f"{now.year}_{now.month}_{now.day}_{now.hour}_{now.minute}_{now.second}"
+        if error:
+            suffix = "_error"
+        elif partial:
+            suffix = "_partial"
+        else:
+            suffix = ""
         filename = f"comments_{ts}{suffix}.csv"
         filepath = os.path.join(path, filename)
         df.to_csv(filepath, index=False)
+
+        if collected_video_ids:
+            json_path = os.path.join(path, "videos_list.json")
+            if os.path.exists(json_path):
+                with open(json_path, "r") as f:
+                    video_data = json.load(f)
+                for v in video_data["videos"]:
+                    if v["video_id"] in collected_video_ids:
+                        v["collected"] = True
+                with open(json_path, "w") as f:
+                    json.dump(video_data, f, indent=4)
+            collected_video_ids.clear()
+
         return filepath
 
     def _get_comments_from_video_ids(
@@ -318,8 +352,9 @@ class Crawling:
 
         num_requests = 0
         num_comments_count = 0
+        collected_ids = []
         try:
-            for v in video_data["videos"][:limit]:  # first 50 videos
+            for idx, v in enumerate(video_data["videos"][:limit], start=1):
                 _count = 0
 
                 if v["collected"]:  # skip collected vids
@@ -331,7 +366,7 @@ class Crawling:
 
                 if int(v["comment_count"]) == 0:
                     print("Skipping video, 0 comments ...")
-                    v["collected"] = True
+                    collected_ids.append(v["video_id"])
                     continue
 
                 print(f"\tcomments from {v['video_id']}, {v['video_title']}")
@@ -357,6 +392,9 @@ class Crawling:
                                 f"skipping current video: {e.error_details[0]['message']}"
                             )
                             break
+                        self._save_comments(
+                            df, path, error=True, collected_video_ids=collected_ids
+                        )
                         raise
 
                     if response:
@@ -382,27 +420,31 @@ class Crawling:
                     if not page_token:  # if next comment page doesnt exist, break
                         break
 
-                # update json
-                v["collected"] = True
-                with open(video_data_path, "w") as f:
-                    json.dump(video_data, f, indent=4)
+                collected_ids.append(v["video_id"])
                 print(
-                    f"\tprogress saved. '{v['video_title']}' marked as collected. Currently: {num_comments_count} comments."
+                    f"\tvideo done. '{v['video_title']}' queued for collection. currently: {num_comments_count} comments."
                 )
 
+                if idx % self.SAVE_EVERY_N_VIDEOS == 0:
+                    saved_path = self._save_comments(
+                        df, path, partial=True, collected_video_ids=collected_ids
+                    )
+                    print(f"progress saved after {idx} videos. file: {saved_path}")
+                    df = pd.DataFrame()
+
             print("saving...")
-            saved_path = self._save_comments(df, path)
+            saved_path = self._save_comments(
+                df, path, collected_video_ids=collected_ids
+            )
             print(f"saved to: {saved_path}")
 
         except QuotaExhaustedError:
             print("\n" + "=" * 50)
             print("all api keys exhausted. saving current progress...")
-            partial_path = self._save_comments(df, path, partial=True)
+            partial_path = self._save_comments(
+                df, path, partial=True, collected_video_ids=collected_ids
+            )
             print(f"partial progress saved to: {partial_path}")
-
-            with open(video_data_path, "w") as f:
-                json.dump(video_data, f, indent=4)
-            print("videos_list.json updated. resumable state saved.")
 
     ##
     # UPLOADS WITHOUT SHORTS
@@ -491,7 +533,7 @@ class Crawling:
 
         return videos
 
-    def build_youtubers_videos_list_from_uploads(self):
+    def build_youtubers_videos_list_from_uploads(self, force=False):
         if not os.path.exists(self.youtubers_path):
             self.build_channels_list()
 
@@ -500,6 +542,13 @@ class Crawling:
             youtubers_list = json.load(f)
 
         for channel in youtubers_list:
+            _path = self.crawler_path + channel["youtuber"]
+            _json_path = f"{_path}/videos_list.json"
+
+            if not force and os.path.exists(_json_path):
+                print(f"{_json_path} already exists and force = {force}, skipping ...")
+                continue
+
             print(
                 f"Crawling info from: {channel['channel_title']}, {channel['youtuber']}..."
             )
@@ -518,9 +567,8 @@ class Crawling:
                     "videos": videos,
                 }
 
-                _path = self.crawler_path + channel["youtuber"]
                 os.makedirs(_path, exist_ok=True)
-                with open(f"{_path}/videos_list.json", "w") as f:
+                with open(_json_path, "w") as f:
                     json.dump(channel_data, f, indent=4)
 
                 print(f"saved at {_path}")

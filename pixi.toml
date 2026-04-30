@@ -6,6 +6,9 @@ version = "0.1.0"
 
 [tasks]
 main = "python main.py"
+verify = "python verify_videos.py"
+merge = "python merge_datasets.py"
+update = "python update_json.py"
 
 [dependencies]
 python = "3.12.*"
