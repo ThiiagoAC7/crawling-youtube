@@ -57,6 +57,11 @@ class YouTubeAPIManager:
                     self._quota_failures_since_success += 1
                     self.youtube = self._get_new_client()
                 else:
+                    print(f"request failed: {reason}")
+                    print(f"  method: {request.method}")
+                    print(f"  uri: {request.uri}")
+                    if request.body:
+                        print(f"  body: {request.body}")
                     raise
 
             except Exception as e:

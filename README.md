@@ -63,6 +63,11 @@ pixi run main
 
 - [x] api key rotation handler
 - [ ] better error handling for when all api keys are used -> do this outside crawling.py
-- [ ] arg to filter by youtubers when collecting, usefull to check api limits
-- [ ] better name when saving the final .csv
+- [x] arg to filter by youtubers when collecting, usefull to check api limits
+- [x] better name when saving the final .csv
 - [ ] possible data preprocessing -> dont collect channel @ and mask @handles on comments -> @user
+- [ ] fix: when all api keys are used, progress is saved but current unfinished vid is marked as
+true
+    - possible feature: save curr progress + page token to not recollect comments (needs testing to
+      make sure comments arent skipped
+- [ ] fix: HttpError processingFailure -> add retries

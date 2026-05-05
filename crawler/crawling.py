@@ -16,6 +16,7 @@ from constants import (
 
 from .api_manager import QuotaExhaustedError, YouTubeAPIManager
 from .parser import *
+from .progress import VideoProgress
 
 
 class Crawling:
@@ -98,7 +99,9 @@ class Crawling:
         with open(self.youtubers_path, "r", encoding="utf-8") as f:
             existing = json.load(f)
 
-        existing_values = {ch[key_field] for ch in existing}
+        existing_values = {ch[key_field][1:] for ch in existing}
+        print(identifiers)
+        print(existing_values)
         return set(identifiers).issubset(existing_values)
 
     ##
@@ -112,6 +115,7 @@ class Crawling:
         if self._all_channels_present(self.youtubers, "youtuber"):
             print(f" all channels are present on youtubers.json ...")
             return
+
 
         youtubers = []
         print(self.youtubers)
@@ -255,12 +259,10 @@ class Crawling:
         - commentThread endpoint only returns 5 replies per comment!
         """
         page_token = None
-        _count = 0
         df = pd.DataFrame()
 
         for id in parent_ids:
             while True:
-                _count += 1
                 method_func = lambda client, **kw: client.comments().list(**kw)
                 try:
                     response = self.api_manager.make_request(
@@ -280,7 +282,6 @@ class Crawling:
                     raise
 
                 if response:
-                    print(f"\t\tparsing comment replies ... {_count}")
                     _d = parse_replies(
                         response,
                         id,
@@ -350,12 +351,12 @@ class Crawling:
 
         print(f"Collecting the first {limit} videos (if not collected already)")
 
-        num_requests = 0
-        num_comments_count = 0
+        tracker = VideoProgress(video_data["youtuber"], path)
+        tracker.log_header(limit)
+
         collected_ids = []
         try:
             for idx, v in enumerate(video_data["videos"][:limit], start=1):
-                _count = 0
 
                 if v["collected"]:  # skip collected vids
                     continue
@@ -369,9 +370,8 @@ class Crawling:
                     collected_ids.append(v["video_id"])
                     continue
 
-                print(f"\tcomments from {v['video_id']}, {v['video_title']}")
+                tracker.set_video(v["video_id"], v["video_title"])
                 while True:  # to get next pages if nextPageToken != None
-                    _count += 1
                     method_func = lambda client, **kw: client.commentThreads().list(
                         **kw
                     )
@@ -385,26 +385,24 @@ class Crawling:
                             order="time",
                             textFormat="plainText",
                         )
-                        num_requests += 1
                     except googleapiclient.errors.HttpError as e:
                         if e.error_details[0]["reason"] == "commentsDisabled":
                             print(
                                 f"skipping current video: {e.error_details[0]['message']}"
                             )
                             break
+                        tracker.save_log(collected_ids, label="error")
                         self._save_comments(
                             df, path, error=True, collected_video_ids=collected_ids
                         )
                         raise
 
                     if response:
-                        print(
-                            f"\t\tparsing comments and appending to dataframe, page {_count}, req {num_requests}"
-                        )
                         _d, comments_many_replies_ids = parse_comment_threads(
                             response, v["video_id"], v["video_title"], video_data_path
                         )
                         df = pd.concat([df, pd.DataFrame(_d)], ignore_index=True)
+                        tracker.add_comments(len(_d))
                         if comments_many_replies_ids != []:
                             # commentThread endpoint only returns 5 replies per comment!
                             repl_df = self._get_replies_from_parent_ids(
@@ -413,19 +411,17 @@ class Crawling:
                                 v["video_title"],
                             )
                             df = pd.concat([df, repl_df], ignore_index=True)
-
-                        num_comments_count = len(df)
+                            tracker.add_replies(len(repl_df))
 
                     page_token = response.get("nextPageToken")
                     if not page_token:  # if next comment page doesnt exist, break
                         break
 
                 collected_ids.append(v["video_id"])
-                print(
-                    f"\tvideo done. '{v['video_title']}' queued for collection. currently: {num_comments_count} comments."
-                )
+                tracker.video_done()
 
                 if idx % self.SAVE_EVERY_N_VIDEOS == 0:
+                    tracker.save_log(collected_ids, label="partial")
                     saved_path = self._save_comments(
                         df, path, partial=True, collected_video_ids=collected_ids
                     )
@@ -433,6 +429,7 @@ class Crawling:
                     df = pd.DataFrame()
 
             print("saving...")
+            tracker.save_log(collected_ids, label="final")
             saved_path = self._save_comments(
                 df, path, collected_video_ids=collected_ids
             )
@@ -441,6 +438,7 @@ class Crawling:
         except QuotaExhaustedError:
             print("\n" + "=" * 50)
             print("all api keys exhausted. saving current progress...")
+            tracker.save_log(collected_ids, label="quota_exhausted")
             partial_path = self._save_comments(
                 df, path, partial=True, collected_video_ids=collected_ids
             )
