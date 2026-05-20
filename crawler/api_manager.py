@@ -14,7 +14,7 @@ class YouTubeAPIManager:
     YOUTUBE_API_SERVICE_NAME = "youtube"
     YOUTUBE_API_VERSION = "v3"
 
-    def __init__(self, api_keys):
+    def __init__(self, api_keys, pause_quota_error):
         if not api_keys:
             raise ValueError("No API keys provided.")
 
@@ -22,13 +22,18 @@ class YouTubeAPIManager:
         self.current_key_index = -1
         self._quota_failures_since_success = 0
         self.youtube = self._get_new_client()
+        self.pause_quota_error = pause_quota_error
 
     def _get_new_client(self):
         if self.current_key_index >= len(self.api_keys) - 1:
             if self._quota_failures_since_success >= len(self.api_keys):
-                raise QuotaExhaustedError(
-                    "all api keys have exceeded their quota. stopping."
-                )
+                if self.pause_quota_error:
+                    print("all api keys have exceeded their quota. Waiting quota reset ...")
+                    input("Continue if quota reset ...")
+                else:
+                    raise QuotaExhaustedError(
+                        "all api keys have exceeded their quota. stopping."
+                    )
             self.current_key_index = 0
         else:
             self.current_key_index += 1
@@ -42,6 +47,8 @@ class YouTubeAPIManager:
         )
 
     def make_request(self, method_func, **kwargs):
+        processing_failure_retries = 0
+        connection_retries = 0
         while True:
             try:
                 request = method_func(self.youtube, **kwargs)
@@ -56,14 +63,24 @@ class YouTubeAPIManager:
                     print("api key quota exceeded. rotating to next key...")
                     self._quota_failures_since_success += 1
                     self.youtube = self._get_new_client()
+                    processing_failure_retries = 0
+                    connection_retries = 0
+                elif reason == "processingFailure":
+                    processing_failure_retries += 1
+                    if processing_failure_retries > 5:
+                        print("processingFailure persisted after 5 retries, raising.")
+                        raise
+                    print("request failed with weird processingFailure, retrying ...")
+                    print(f"  method: {request.method} uri: {request.uri}")
+                    time.sleep(1)
                 else:
                     print(f"request failed: {reason}")
-                    print(f"  method: {request.method}")
-                    print(f"  uri: {request.uri}")
-                    if request.body:
-                        print(f"  body: {request.body}")
                     raise
 
             except Exception as e:
+                connection_retries += 1
+                if connection_retries > 10:
+                    print(f"connection error persisted after 10 retries: {e}")
+                    raise
                 print(f"connection error: {e}. retrying in 5s...")
                 time.sleep(5)

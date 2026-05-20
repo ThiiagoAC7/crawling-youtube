@@ -18,6 +18,7 @@ def update_json(yt):
     for indice, video in enumerate(dados.get("videos", [])):
         if (video["video_id"] in video_ids) or (video["comment_count"] == "0"):
             video["collected"] = True
+            video["last_page_token"] = None
         else:
             video["collected"] = False
 

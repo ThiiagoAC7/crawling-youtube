@@ -5,13 +5,14 @@ from constants import DEVELOPER_KEYS
 from crawler.crawling import Crawling
 
 
-def run_crawler(channel_ids, youtubers, api_keys, output_dir, filters):
+def run_crawler(channel_ids, youtubers, api_keys, output_dir, filters, pause):
     craw = Crawling(
         channel_ids=channel_ids,
         youtubers=youtubers,
         api_keys=api_keys,
         output_dir=output_dir,
         filters=filters,
+        pause=pause,
     )
     craw.build_channels_list()
     if channel_ids:
@@ -63,6 +64,12 @@ def main():
     parser.add_argument(
         "--max-duration", type=int, help="filter videos with duration <= N seconds"
     )
+    parser.add_argument(
+        "--pause-quota-error",
+        action="store_true",
+        default=True,
+        help="pause on quota error instead of raising exception",
+    )
     args = parser.parse_args()
 
     config = {}
@@ -97,6 +104,7 @@ def main():
         api_keys=api_keys,
         output_dir=config.get("output_dir", args.output_dir),
         filters=filters if filters else None,
+        pause=config.get("pause_quota_error", args.pause_quota_error),
     )
 
 

@@ -105,6 +105,7 @@ def parse_search_videos(response, channel, path):
         _video_info["date_published"] = _snippets["publishedAt"]
         _video_info["video_title"] = _snippets["title"]
         _video_info["video_desc"] = _snippets["description"]
+        _video_info["last_page_token"] = None
         videos_data["videos"].append(_video_info)
 
     _path = f"{path}/videos_list.json"

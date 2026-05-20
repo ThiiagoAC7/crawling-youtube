@@ -20,7 +20,7 @@ from .progress import VideoProgress
 
 
 class Crawling:
-    SAVE_EVERY_N_VIDEOS = 100
+    SAVE_EVERY_N_VIDEOS = 20
 
     def __init__(
         self,
@@ -29,6 +29,7 @@ class Crawling:
         api_keys=None,
         output_dir=None,
         filters=None,
+        pause=True,
     ):
         os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "0"
 
@@ -44,11 +45,12 @@ class Crawling:
         self.end_date = self._parse_date(_filters.get("end_date"), None)
         self.min_duration = _filters.get("min_duration")
         self.max_duration = _filters.get("max_duration")
+        self.pause_quota_error = pause
 
         if not os.path.exists(self.crawler_path):
             os.makedirs(self.crawler_path)
 
-        self.api_manager = YouTubeAPIManager(self.api_keys)
+        self.api_manager = YouTubeAPIManager(self.api_keys, self.pause_quota_error)
 
     def _parse_date(self, date_str, default):
         """
@@ -115,7 +117,6 @@ class Crawling:
         if self._all_channels_present(self.youtubers, "youtuber"):
             print(f" all channels are present on youtubers.json ...")
             return
-
 
         youtubers = []
         print(self.youtubers)
@@ -258,10 +259,10 @@ class Crawling:
         gets replies from comments with more than 5 replies
         - commentThread endpoint only returns 5 replies per comment!
         """
-        page_token = None
         df = pd.DataFrame()
 
         for id in parent_ids:
+            page_token = None
             while True:
                 method_func = lambda client, **kw: client.comments().list(**kw)
                 try:
@@ -297,17 +298,27 @@ class Crawling:
         return df
 
     def _save_comments(
-        self, df, path, partial=False, error=False, collected_video_ids=None
+        self,
+        df,
+        path,
+        video_data,
+        video_data_path,
+        partial=False,
+        error=False,
+        collected_video_ids=None,
     ):
         """
-        saves comments dataframe with timestamped filename.
+        saves comments dataframe with timestamped filename
+        and persists updated video_data (including last_page_token state).
 
         params:
         - df: comments dataframe
         - path: youtuber directory path (e.g., ./data/@mrbeast/)
+        - video_data: in-memory dict of videos_list.json
+        - video_data_path: absolute path to videos_list.json
         - partial: if True, appends '_partial' suffix
         - error: if True, appends '_error' suffix
-        - collected_video_ids: list of video ids to mark as collected in videos_list.json
+        - collected_video_ids: list of video ids to mark as collected
 
         returns: full filepath of saved file
         """
@@ -324,30 +335,127 @@ class Crawling:
         df.to_csv(filepath, index=False)
 
         if collected_video_ids:
-            json_path = os.path.join(path, "videos_list.json")
-            if os.path.exists(json_path):
-                with open(json_path, "r") as f:
-                    video_data = json.load(f)
-                for v in video_data["videos"]:
-                    if v["video_id"] in collected_video_ids:
-                        v["collected"] = True
-                with open(json_path, "w") as f:
-                    json.dump(video_data, f, indent=4)
-            collected_video_ids.clear()
+            for v in video_data["videos"]:
+                if v["video_id"] in collected_video_ids:
+                    v["collected"] = True
+            with open(video_data_path, "w") as f:
+                json.dump(video_data, f, indent=4)
 
         return filepath
+
+    def _save_progress_on_error(
+        self, df, path, video_data, video_data_path, tracker, collected_ids, error_type
+    ):
+        """
+        saves partial progress on quota exhaustion or keyboard interrupt.
+
+        params:
+        - error_type: "quota_exhausted" or "keyboard_interrupt"
+        """
+        labels = {
+            "quota_exhausted": "quota_exhausted",
+            "keyboard_interrupt": "interrupted",
+        }
+        messages = {
+            "quota_exhausted": "all api keys exhausted.",
+            "keyboard_interrupt": "interrupted by user.",
+        }
+        label = labels.get(error_type, error_type)
+        msg = messages.get(error_type, error_type)
+        print(f"\n{'=' * 50}")
+        print(f"{msg} saving current progress...")
+        tracker.save_log(collected_ids, label=label)
+        saved_path = self._save_comments(
+            df,
+            path,
+            video_data,
+            video_data_path,
+            partial=True,
+            collected_video_ids=collected_ids,
+        )
+        print(f"partial progress saved to: {saved_path}")
+
+    def _fetch_comment_threads_for_video(self, video, path, video_data_path, tracker):
+        """
+        fetches all comment thread pages for one video, including extra replies.
+        handles commentsDisabled. saves last_page_token per page for resume.
+
+        params:
+        - video: video dict from videos_list.json (mutated in place)
+        - path: youtuber directory
+        - video_data_path: path to videos_list.json
+        - tracker: VideoProgress instance
+
+        returns: dataframe with all comments (top-level + replies) for this video
+        """
+        df = pd.DataFrame()
+        page_token = video.get("last_page_token", None)
+
+        while True:
+            video["last_page_token"] = page_token
+
+            method_func = lambda client, **kw: client.commentThreads().list(**kw)
+            try:
+                response = self.api_manager.make_request(
+                    method_func,
+                    part="snippet,replies,id",
+                    videoId=video["video_id"],
+                    maxResults=100,
+                    pageToken=page_token,
+                    order="time",
+                    textFormat="plainText",
+                )
+            except googleapiclient.errors.HttpError as e:
+                reason = (
+                    e.error_details[0]["reason"]
+                    if e.error_details
+                    else "unknown"
+                )
+                if reason == "commentsDisabled":
+                    print(
+                        f"skipping current video: {e.error_details[0]['message']}"
+                    )
+                    video["collected"] = True
+                    video["last_page_token"] = None
+                    return df
+                raise
+
+            if response:
+                _d, comments_many_replies_ids = parse_comment_threads(
+                    response, video["video_id"], video["video_title"], video_data_path
+                )
+                df = pd.concat([df, pd.DataFrame(_d)], ignore_index=True)
+                tracker.add_comments(len(_d))
+                if comments_many_replies_ids:
+                    repl_df = self._get_replies_from_parent_ids(
+                        comments_many_replies_ids,
+                        video["video_id"],
+                        video["video_title"],
+                    )
+                    df = pd.concat([df, repl_df], ignore_index=True)
+                    tracker.add_replies(len(repl_df))
+
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                video["last_page_token"] = None
+                break
+
+        video["collected"] = True
+        return df
 
     def _get_comments_from_video_ids(
         self, video_data, video_data_path, path, limit=50, filter_ids=[]
     ):
         """
         iterates through each video, gets its comments and saves dataset.
-        Params:
-        - videos: videos list, with video_id, date, video_title
+        persists last_page_token per video in videos_list.json for resume.
+
+        params:
+        - video_data: dict with youtuber info and videos list
+        - video_data_path: path to videos_list.json
         - path: current youtuber path, i.e ./data/{youtuber}/
         """
         df = pd.DataFrame()
-        page_token = None  # video's comment section has many pages
 
         print(f"Collecting the first {limit} videos (if not collected already)")
 
@@ -357,73 +465,37 @@ class Crawling:
         collected_ids = []
         try:
             for idx, v in enumerate(video_data["videos"][:limit], start=1):
-
-                if v["collected"]:  # skip collected vids
+                if v.get("collected"):
                     continue
 
-                if (filter_ids) and (v["video_id"] not in filter_ids):
+                if filter_ids and v["video_id"] not in filter_ids:
                     print(f"not in selected videos:{v['video_id']}")
                     continue
 
-                if int(v["comment_count"]) == 0:
+                if int(v.get("comment_count", 0)) == 0:
                     print("Skipping video, 0 comments ...")
+                    v["collected"] = True
+                    v["last_page_token"] = None
                     collected_ids.append(v["video_id"])
                     continue
 
                 tracker.set_video(v["video_id"], v["video_title"])
-                while True:  # to get next pages if nextPageToken != None
-                    method_func = lambda client, **kw: client.commentThreads().list(
-                        **kw
-                    )
-                    try:
-                        response = self.api_manager.make_request(
-                            method_func,
-                            part="snippet,replies,id",
-                            videoId=v["video_id"],
-                            maxResults=100,
-                            pageToken=page_token,
-                            order="time",
-                            textFormat="plainText",
-                        )
-                    except googleapiclient.errors.HttpError as e:
-                        if e.error_details[0]["reason"] == "commentsDisabled":
-                            print(
-                                f"skipping current video: {e.error_details[0]['message']}"
-                            )
-                            break
-                        tracker.save_log(collected_ids, label="error")
-                        self._save_comments(
-                            df, path, error=True, collected_video_ids=collected_ids
-                        )
-                        raise
-
-                    if response:
-                        _d, comments_many_replies_ids = parse_comment_threads(
-                            response, v["video_id"], v["video_title"], video_data_path
-                        )
-                        df = pd.concat([df, pd.DataFrame(_d)], ignore_index=True)
-                        tracker.add_comments(len(_d))
-                        if comments_many_replies_ids != []:
-                            # commentThread endpoint only returns 5 replies per comment!
-                            repl_df = self._get_replies_from_parent_ids(
-                                comments_many_replies_ids,
-                                v["video_id"],
-                                v["video_title"],
-                            )
-                            df = pd.concat([df, repl_df], ignore_index=True)
-                            tracker.add_replies(len(repl_df))
-
-                    page_token = response.get("nextPageToken")
-                    if not page_token:  # if next comment page doesnt exist, break
-                        break
-
+                video_df = self._fetch_comment_threads_for_video(
+                    v, path, video_data_path, tracker
+                )
+                df = pd.concat([df, video_df], ignore_index=True)
                 collected_ids.append(v["video_id"])
                 tracker.video_done()
 
                 if idx % self.SAVE_EVERY_N_VIDEOS == 0:
                     tracker.save_log(collected_ids, label="partial")
                     saved_path = self._save_comments(
-                        df, path, partial=True, collected_video_ids=collected_ids
+                        df,
+                        path,
+                        video_data,
+                        video_data_path,
+                        partial=True,
+                        collected_video_ids=collected_ids,
                     )
                     print(f"progress saved after {idx} videos. file: {saved_path}")
                     df = pd.DataFrame()
@@ -431,18 +503,35 @@ class Crawling:
             print("saving...")
             tracker.save_log(collected_ids, label="final")
             saved_path = self._save_comments(
-                df, path, collected_video_ids=collected_ids
+                df,
+                path,
+                video_data,
+                video_data_path,
+                collected_video_ids=collected_ids,
             )
             print(f"saved to: {saved_path}")
 
         except QuotaExhaustedError:
-            print("\n" + "=" * 50)
-            print("all api keys exhausted. saving current progress...")
-            tracker.save_log(collected_ids, label="quota_exhausted")
-            partial_path = self._save_comments(
-                df, path, partial=True, collected_video_ids=collected_ids
+            self._save_progress_on_error(
+                df, path, video_data, video_data_path,
+                tracker, collected_ids, "quota_exhausted",
             )
-            print(f"partial progress saved to: {partial_path}")
+        except KeyboardInterrupt:
+            self._save_progress_on_error(
+                df, path, video_data, video_data_path,
+                tracker, collected_ids, "keyboard_interrupt",
+            )
+        except Exception:
+            tracker.save_log(collected_ids, label="error")
+            self._save_comments(
+                df,
+                path,
+                video_data,
+                video_data_path,
+                error=True,
+                collected_video_ids=collected_ids,
+            )
+            raise
 
     ##
     # UPLOADS WITHOUT SHORTS
@@ -524,6 +613,7 @@ class Crawling:
                         "like_count": item["statistics"].get("likeCount", "0"),
                         "comment_count": item["statistics"].get("commentCount", "0"),
                         "collected": False,
+                        "last_page_token": None,
                         "idx": counter,
                     }
                 )

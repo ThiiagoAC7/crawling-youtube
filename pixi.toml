@@ -5,10 +5,10 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
-main = "python main.py"
-verify = "python verify_videos.py"
-merge = "python merge_datasets.py"
-update = "python update_json.py"
+main = {cmd = "python main.py", description = "collect comments from configured channels"}
+verify = {cmd = "python verify_videos.py", description = "check which videos have been collected per youtuber"}
+merge = {cmd = "python merge_datasets.py", description = "merge partial CSV comment files per youtuber into comments.csv"}
+update = {cmd = "python update_json.py", description = "sync videos_list.json collected status from existing comments.csv"}
 
 [dependencies]
 python = "3.12.*"
@@ -22,3 +22,4 @@ tqdm = ">=4.67.1,<5"
 [pypi-dependencies]
 python-dotenv = ">=1.2.1, <2"
 isodate = ">=0.7.2, <0.8"
+polars = ">=1.40.1, <2"

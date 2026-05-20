@@ -21,6 +21,7 @@ DEVELOPER_KEYS = [
         os.getenv("API_KEY"),
         os.getenv("SECONDARY_API_KEY"),
         os.getenv("THIRD_API_KEY"),
+        os.getenv("FOURTH_API_KEY"),
     ]
     if k
 ]
