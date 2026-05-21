@@ -21,6 +21,8 @@ class VideoProgress:
         self.video_replies = 0
         self.total = 0
         self.videos_done = 0
+        self.video_pages = 0
+        self.current_page_token = None
         self._is_tty = sys.stdout.isatty()
         self._last_page = 0
 
@@ -29,6 +31,8 @@ class VideoProgress:
         self.video_title = video_title
         self.video_comments = 0
         self.video_replies = 0
+        self.video_pages = 0
+        self.current_page_token = None
         self._last_page = 0
         if self._is_tty:
             self._redraw()
@@ -42,6 +46,13 @@ class VideoProgress:
         self.video_replies += count
         self.total += count
         self._maybe_redraw()
+
+    def increment_page(self):
+        self.video_pages += 1
+        self._maybe_redraw()
+
+    def set_page_token(self, token):
+        self.current_page_token = token
 
     def video_done(self):
         self.videos_done += 1
@@ -79,6 +90,7 @@ class VideoProgress:
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]{marker}",
             f"  @{self.youtuber} | {self.video_id} \"{self.video_title[:60]}\"",
             f"  Video: {self.video_comments}c + {self.video_replies}r = {video_total} | Total: {self.total} | Videos done: {self.videos_done}",
+            f"  Page token: {self.current_page_token or '—'}",
             f"  Collected: {ids}",
             "",
         ]
@@ -96,6 +108,7 @@ class VideoProgress:
                 print(
                     f"  @{self.youtuber} | {self.video_id}"
                     f" | {self.video_comments}c + {self.video_replies}r = {video_total}"
+                    f" | pages: {self.video_pages}"
                     f" | Total: {self.total}"
                 )
 
@@ -110,6 +123,7 @@ class VideoProgress:
         status = (
             f"@{self.youtuber} | {self.video_id} \"{title}\""
             f" | Video: {self.video_comments}c + {self.video_replies}r = {video_total}"
+            f" | pages: {self.video_pages}"
             f" | Total: {self.total}"
         )
         width = shutil.get_terminal_size().columns

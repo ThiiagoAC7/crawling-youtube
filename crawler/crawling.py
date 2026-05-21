@@ -51,6 +51,7 @@ class Crawling:
             os.makedirs(self.crawler_path)
 
         self.api_manager = YouTubeAPIManager(self.api_keys, self.pause_quota_error)
+        self._df = pd.DataFrame()
 
     def _parse_date(self, date_str, default):
         """
@@ -338,13 +339,13 @@ class Crawling:
             for v in video_data["videos"]:
                 if v["video_id"] in collected_video_ids:
                     v["collected"] = True
-            with open(video_data_path, "w") as f:
-                json.dump(video_data, f, indent=4)
+        with open(video_data_path, "w") as f:
+            json.dump(video_data, f, indent=4)
 
         return filepath
 
     def _save_progress_on_error(
-        self, df, path, video_data, video_data_path, tracker, collected_ids, error_type
+        self, path, video_data, video_data_path, tracker, collected_ids, error_type
     ):
         """
         saves partial progress on quota exhaustion or keyboard interrupt.
@@ -364,9 +365,11 @@ class Crawling:
         msg = messages.get(error_type, error_type)
         print(f"\n{'=' * 50}")
         print(f"{msg} saving current progress...")
+        if tracker.current_page_token:
+            print(f"last page token: {tracker.current_page_token}")
         tracker.save_log(collected_ids, label=label)
         saved_path = self._save_comments(
-            df,
+            self._df,
             path,
             video_data,
             video_data_path,
@@ -386,9 +389,8 @@ class Crawling:
         - video_data_path: path to videos_list.json
         - tracker: VideoProgress instance
 
-        returns: dataframe with all comments (top-level + replies) for this video
+        returns: None (accumulates into self._df)
         """
-        df = pd.DataFrame()
         page_token = video.get("last_page_token", None)
 
         while True:
@@ -417,14 +419,14 @@ class Crawling:
                     )
                     video["collected"] = True
                     video["last_page_token"] = None
-                    return df
+                    return
                 raise
 
             if response:
                 _d, comments_many_replies_ids = parse_comment_threads(
                     response, video["video_id"], video["video_title"], video_data_path
                 )
-                df = pd.concat([df, pd.DataFrame(_d)], ignore_index=True)
+                self._df = pd.concat([self._df, pd.DataFrame(_d)], ignore_index=True)
                 tracker.add_comments(len(_d))
                 if comments_many_replies_ids:
                     repl_df = self._get_replies_from_parent_ids(
@@ -432,16 +434,18 @@ class Crawling:
                         video["video_id"],
                         video["video_title"],
                     )
-                    df = pd.concat([df, repl_df], ignore_index=True)
+                    self._df = pd.concat([self._df, repl_df], ignore_index=True)
                     tracker.add_replies(len(repl_df))
 
             page_token = response.get("nextPageToken")
-            if not page_token:
+            tracker.set_page_token(page_token)
+            if page_token:
+                tracker.increment_page()
+            else:
                 video["last_page_token"] = None
                 break
 
         video["collected"] = True
-        return df
 
     def _get_comments_from_video_ids(
         self, video_data, video_data_path, path, limit=50, filter_ids=[]
@@ -463,6 +467,7 @@ class Crawling:
         tracker.log_header(limit)
 
         collected_ids = []
+        self._df = df
         try:
             for idx, v in enumerate(video_data["videos"][:limit], start=1):
                 if v.get("collected"):
@@ -480,17 +485,16 @@ class Crawling:
                     continue
 
                 tracker.set_video(v["video_id"], v["video_title"])
-                video_df = self._fetch_comment_threads_for_video(
+                self._fetch_comment_threads_for_video(
                     v, path, video_data_path, tracker
                 )
-                df = pd.concat([df, video_df], ignore_index=True)
                 collected_ids.append(v["video_id"])
                 tracker.video_done()
 
                 if idx % self.SAVE_EVERY_N_VIDEOS == 0:
                     tracker.save_log(collected_ids, label="partial")
                     saved_path = self._save_comments(
-                        df,
+                        self._df,
                         path,
                         video_data,
                         video_data_path,
@@ -498,12 +502,12 @@ class Crawling:
                         collected_video_ids=collected_ids,
                     )
                     print(f"progress saved after {idx} videos. file: {saved_path}")
-                    df = pd.DataFrame()
+                    self._df = pd.DataFrame()
 
             print("saving...")
             tracker.save_log(collected_ids, label="final")
             saved_path = self._save_comments(
-                df,
+                self._df,
                 path,
                 video_data,
                 video_data_path,
@@ -513,18 +517,18 @@ class Crawling:
 
         except QuotaExhaustedError:
             self._save_progress_on_error(
-                df, path, video_data, video_data_path,
+                path, video_data, video_data_path,
                 tracker, collected_ids, "quota_exhausted",
             )
         except KeyboardInterrupt:
             self._save_progress_on_error(
-                df, path, video_data, video_data_path,
+                path, video_data, video_data_path,
                 tracker, collected_ids, "keyboard_interrupt",
             )
         except Exception:
             tracker.save_log(collected_ids, label="error")
             self._save_comments(
-                df,
+                self._df,
                 path,
                 video_data,
                 video_data_path,
