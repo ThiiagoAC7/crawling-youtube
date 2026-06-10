@@ -1,0 +1,45 @@
+# REMOTE AND LOCAL paths
+# TODO: understand bisync and other stuff
+# the idea is to have similar structures
+# REMOTE = gdrive:faculdade/ml/project/...
+# LOCAL  = /home/thiago/dev/ml/project/...
+remote := "gdrive:faculdade/coletor"
+local := "/home/thiago/dev/coletor-youtube/"
+ignore_file := ".rcloneignore"
+
+flags := "-P --transfers=4 --exclude '.git/**' --exclude-from " + ignore_file
+
+@default:
+    just --list
+
+# upload changes (safe, like git push)
+push:
+    rclone copy {{local}} {{remote}} {{flags}}
+
+# mirror local to remote (destructive, like git push --force)
+force-push:
+    @printf "⚠️ WARNING: This will DELETE files on Google Drive that are not on your computer.\n"
+    @printf "Are you sure you want to proceed? [y/N] "
+    @read ans; \
+    if [ "$ans" = "y" ] || [ "$ans" = "Y" ]; then \
+        echo "Syncing..."; \
+        rclone sync {{local}} {{remote}} {{flags}}; \
+    else \
+        echo "Aborted."; \
+    fi
+
+# download changes (Safe, like git pull)
+pull:
+    rclone copy {{remote}} {{local}} {{flags}}
+
+# show differences (like git status)
+status:
+    rclone check {{local}} {{remote}} --one-way --exclude-from {{ignore_file}} --exclude ".git/**"
+
+
+# pull specific directories from google drive to local
+pull-dirs +dirs:
+    @for dir in {{dirs}}; do \
+        echo "pulling $dir..."; \
+        rclone copy "{{remote}}/$dir" "{{local}}/$dir" {{flags}}; \
+    done
